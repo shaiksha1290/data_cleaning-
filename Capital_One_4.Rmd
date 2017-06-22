@@ -1,0 +1,210 @@
+---
+title: "CapitalOne_4"
+author: "Shaik Shavali"
+date: "December 1, 2016"
+output: html_document
+---
+
+```{r}
+
+# to supress warnings globally
+options(warn=-1)
+
+suppressPackageStartupMessages(library(data.table))
+suppressPackageStartupMessages(library(dplyr))
+suppressPackageStartupMessages(library(rjson))
+suppressPackageStartupMessages(library(ggplot2))
+
+```
+
+  Setting working directory if already not set
+
+```{r}
+
+projectDir<-'D:/Applied/N start/dump/data-challenge-data-master'
+if(getwd()!=projectDir){
+  setwd(projectDir)  
+}
+```
+
+
+```{r}
+loanData<-suppressWarnings(data.frame(fread('./Data/2012_to_2014_loans_data.csv',na.strings=c(NA,""," "))))
+instData<-suppressWarnings(data.frame(fread('./Data/2012_to_2014_institutions_data.csv',na.strings=c(NA,""," "))))
+
+Loan_inst_Data<-inner_join(loanData,instData,c("Respondent_ID","Agency_Code","As_of_Year"))
+
+```
+
+# Hypothesis
+
+Lets Hypothesis that Change Financial will succecced in DC
+
+Part I - Forecast the future
+
+Part II - Analyse Competitor risk
+ 
+let analyze the available data to see different trends across years for 5 available states.
+
+```{r}
+
+#Group by State and year
+groupedByState <- Loan_inst_Data%>%
+  group_by(State,As_of_Year)%>%
+  summarise(count = n(),
+            totalLoan = sum(Loan_Amount_000),
+            meanLoan = mean(Loan_Amount_000)
+            )
+
+# Applicants
+p <- ggplot(data = groupedByState,aes(x = As_of_Year,y=count,group = State ))
+p + geom_line(aes(col = State),size = 1.5) 
+
+
+# TotalLoan across all 3 years for all 5 states
+p <- ggplot(data = groupedByState,aes(x = As_of_Year,y=totalLoan,group = State ))
+p + geom_line(aes(col = State),size = 1.5) + theme_bw()
+
+# Mean Loan Amount across all 3 years for all 5 states
+p <- ggplot(data = groupedByState,aes(x = As_of_Year,y=meanLoan,group = State ))
+p + geom_line(aes(col = State),size = 1.5) + theme_bw()
+
+```
+
+There is a fall in number of loan applicants and total loan amount from 2012 to 2014. However we can see the increase in average loan amount from 2013 to 2014. This could be due to increase in housing price.
+
+Lets check the housing prices of DC
+
+```{r}
+# Housing prices
+housePricing <- read.csv('http://data.okfn.org/data/core/house-prices-us/r/cities.csv')
+
+# Filter out DC data
+housePricing <- housePricing[,c('Date','DC.Washington')]
+
+# Converting the string date into date type
+housePricing$Date <- as.Date(housePricing$Date,format = '%Y-%m-%d')
+
+# Filtering for data between 2012 and 2014
+housePricing <- housePricing[
+  as.numeric(format(housePricing$Date,"%Y")) >=2012 
+  & as.numeric(format(housePricing$Date,"%Y")) <=2014,]
+
+
+p <- ggplot(data = housePricing,aes(x = Date,y=housePricing$DC.Washington))
+p + geom_line(size = 1.5)
+
+```
+
+We can see the increase in housing price from 2013 to 2014
+
+##Market Analysis
+
+Top 10 respondents 
+
+```{r}
+# Grouping the data
+competitorGrouped <- Loan_inst_Data%>%group_by(Respondent_Name_TS,State)%>%
+  summarise(n = n(),
+            TotalLoan = sum(Loan_Amount_000))
+
+# Finding out the top 10 Respondents for each state
+top10 <- data.table(competitorGrouped, key="State")
+top10 <- top10[, .SD[n %in% head(sort((n),decreasing = T), 10)], by=State]
+
+# In this group of respondents looking for respondents 
+#which are in top 10 for multiple states  
+head(top10%>%
+       group_by(Respondent_Name_TS)%>%
+       summarise(StatesIntop10 = n())%>%
+       arrange(desc(StatesIntop10)),10
+     )
+
+```
+ This is the list of respondents who perform well in many states.
+ 
+ competitors Analysis
+ 
+```{r}
+
+# If all the competitors are perfomring equally well how will the distribution of loan applicants will be
+competitors <- Loan_inst_Data%>%
+       group_by(State,As_of_Year)%>%
+       summarise(competitorsCount = length(unique(Respondent_Name_TS)),
+                 averageApplicants = n()/length(unique(Respondent_Name_TS)),
+                 totalLoanAmout = sum(Loan_Amount_000),
+                 averageLoan = sum(Loan_Amount_000)/length(unique(Respondent_Name_TS))
+                 )
+
+head(competitors)
+
+```
+DC on an average have about approxiamtely 300 Respondents for all 3 years.On an average a respondent will get about 50 Loans with a average loan of about 22M $  (Approximately) if all the competitors are getting equally. 
+
+Analyze who all are making more than our defined average loan amount
+
+```{r}
+
+StatsOfCompetitors <-
+  Loan_inst_Data%>%
+  filter(State == "DC")%>%
+  group_by(Respondent_Name_TS,As_of_Year)%>%
+  summarise(count = n(),
+            totalLoan = sum(Loan_Amount_000))
+
+# to see how much percntage of the total loan amount the above average competitors take from the total loan amount in DC
+
+# for 2012
+# total loan amount through mortagage loans in 2012 for DC
+totalLoan2012 <- sum(
+  StatsOfCompetitors[
+    StatsOfCompetitors$As_of_Year == 2012,"totalLoan"])
+
+# total loan for above average competitors
+aboveAverageLoan2012 <- sum(
+  StatsOfCompetitors[
+    StatsOfCompetitors$As_of_Year == 2012 &
+      StatsOfCompetitors$totalLoan > 26482.854,"totalLoan"])
+
+
+#similarly for 2013
+totalLoan2013 <- sum(
+  StatsOfCompetitors[
+    StatsOfCompetitors$As_of_Year == 2013,"totalLoan"])
+
+# total loan for above average competitors for 2013
+aboveAverageLoan2013 <- sum(
+  StatsOfCompetitors[
+    StatsOfCompetitors$As_of_Year == 2013 &
+      StatsOfCompetitors$totalLoan > 22303.057,"totalLoan"])
+
+
+
+#similarly for 2014
+totalLoan2014 <- sum(
+  StatsOfCompetitors[
+    StatsOfCompetitors$As_of_Year == 2014,"totalLoan"])
+
+# total loan for above average competitors for 2014
+aboveAverageLoan2014 <- sum(
+  StatsOfCompetitors[
+    StatsOfCompetitors$As_of_Year == 2014 &
+      StatsOfCompetitors$totalLoan > 17516.622,"totalLoan"])
+```
+
+
+```{r,echo = FALSE}
+
+print(paste('market share occupied by tough competitors in 2012 is ',toString(round(aboveAverageLoan2012*100/totalLoan2012),2)))
+
+print(paste('market share occupied by tough competitors in 2013 is  ',toString(round(aboveAverageLoan2013*100/totalLoan2013),2)))
+
+print(paste('market share occupied by tough competitors in 2014 is ',toString(round(aboveAverageLoan2014*100/totalLoan2014),2)))
+
+```
+
+On an average 85% of market is occupied by tough competitors.
+
+These are some good competitors as they have already established in market and have got loyal customers.
+
+So the remaining market share is occupied by 280 respondents.With various marketing strategies and analyzing top consistent respondents strategies, Change Finance can get a market share of around 2% to 3%. I would suggest Change Finance would need a good marketing strategie before entering the Washing DC mortge market
